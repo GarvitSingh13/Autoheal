@@ -1,0 +1,61 @@
+# REFERENCE profile for OpenConfig-capable routers (Arista EOS, Cisco IOS-XR/NX-OS, Juniper
+# with OpenConfig enabled, Nokia SR OS ...). Not exercised by the test suite: validate the
+# paths against your platform's supported models before using it in production.
+#
+# To use: set `vendor: openconfig` on devices in topology.yaml, and add an alarm normalizer
+# for the platform's notifications (autoheal/collector/normalizer.py).
+# OpenConfig has no standard "clear BGP" or "restart process" operation; add vendor-native
+# RPCs under `rpcs:` (or use a config toggle playbook) for those playbooks.
+
+name: openconfig
+
+namespaces:
+  oc-if: http://openconfig.net/yang/interfaces
+  oc-ni: http://openconfig.net/yang/network-instance
+
+templates:
+  interface_enable: |
+    <interfaces xmlns="http://openconfig.net/yang/interfaces">
+      <interface><name>{{ interface }}</name><config><name>{{ interface }}</name><enabled>true</enabled></config></interface>
+    </interfaces>
+  interface_disable: |
+    <interfaces xmlns="http://openconfig.net/yang/interfaces">
+      <interface><name>{{ interface }}</name><config><name>{{ interface }}</name><enabled>false</enabled></config></interface>
+    </interfaces>
+  bgp_neighbor_enable: |
+    <network-instances xmlns="http://openconfig.net/yang/network-instance">
+      <network-instance><name>default</name><protocols><protocol>
+        <identifier xmlns:oc-pol-types="http://openconfig.net/yang/policy-types">oc-pol-types:BGP</identifier><name>BGP</name>
+        <bgp><neighbors><neighbor><neighbor-address>{{ neighbor }}</neighbor-address>
+          <config><neighbor-address>{{ neighbor }}</neighbor-address><enabled>true</enabled></config>
+        </neighbor></neighbors></bgp>
+      </protocol></protocols></network-instance>
+    </network-instances>
+  ospf_cost: |
+    <network-instances xmlns="http://openconfig.net/yang/network-instance">
+      <network-instance><name>default</name><protocols><protocol>
+        <identifier xmlns:oc-pol-types="http://openconfig.net/yang/policy-types">oc-pol-types:OSPF</identifier><name>OSPF</name>
+        <ospfv2><areas><area><identifier>0.0.0.0</identifier><interfaces><interface><id>{{ interface }}</id>
+          <config><id>{{ interface }}</id><metric>{{ cost }}</metric></config>
+        </interface></interfaces></area></areas></ospfv2>
+      </protocol></protocols></network-instance>
+    </network-instances>
+
+rpcs: {}
+
+probes:
+  interface_oper_status:
+    netconf_get:
+      filter: |
+        <interfaces xmlns="http://openconfig.net/yang/interfaces"><interface><name>{{ interface }}</name><state><oper-status/></state></interface></interfaces>
+      xpath: "string(//oc-if:interface[oc-if:name='{{ interface }}']/oc-if:state/oc-if:oper-status)"
+  bgp_session_state:
+    netconf_get:
+      filter: |
+        <network-instances xmlns="http://openconfig.net/yang/network-instance"><network-instance><name>default</name><protocols><protocol><bgp><neighbors><neighbor><neighbor-address>{{ neighbor }}</neighbor-address><state><session-state/></state></neighbor></neighbors></bgp></protocol></protocols></network-instance></network-instances>
+      xpath: "string(//oc-ni:neighbor[oc-ni:neighbor-address='{{ neighbor }}']/oc-ni:state/oc-ni:session-state)"
+  ospf_interface_cost:
+    netconf_get_config:
+      filter: |
+        <network-instances xmlns="http://openconfig.net/yang/network-instance"><network-instance><name>default</name><protocols><protocol><ospfv2><areas><area><interfaces><interface><id>{{ interface }}</id></interface></interfaces></area></areas></ospfv2></protocol></protocols></network-instance></network-instances>
+      xpath: "string(//oc-ni:ospfv2//oc-ni:interface[oc-ni:id='{{ interface }}']/oc-ni:config/oc-ni:metric)"

@@ -1,0 +1,24 @@
+[Unit]
+Description=AutoHeal remediator (Autonomous Network Healing Platform)
+After=network-online.target kafka.service
+Wants=network-online.target
+PartOf=autoheal.target
+
+[Service]
+Type=simple
+User=autoheal
+Group=autoheal
+WorkingDirectory=/opt/autoheal
+EnvironmentFile=-/etc/autoheal/autoheal.env
+Environment=AUTOHEAL_CONFIG=/etc/autoheal/settings.yaml
+ExecStart=/opt/autoheal/venv/bin/autoheal run remediator
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autoheal
+PrivateTmp=true
+
+[Install]
+WantedBy=autoheal.target

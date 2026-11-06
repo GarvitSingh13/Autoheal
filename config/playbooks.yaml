@@ -1,0 +1,156 @@
+# Remediation playbooks. The first playbook whose `match` fits an incident's root cause runs.
+#
+# match.root_cause   alarm type of the incident root
+# match.when         optional Jinja expression over the context:
+#                      device, interface, neighbor, peer_device, peer_interface, local_ip, peer_ip,
+#                      intent{enabled, ospf_cost}, attributes (root alarm attributes), alarm,
+#                      incident, device_info{vendor, role, pdu_outlet, ...}, params
+# min_confidence     RCA confidence required (the global remediation.min_confidence also applies)
+# requires_approval  park as pending_approval until an operator approves in the dashboard/API
+# hold_down          seconds to wait first; cancelled if the incident clears or is superseded
+# suppress_alarms    alarm types this playbook causes itself (not treated as new faults)
+# outcome            healed | mitigated (mitigated = service restored, a human must follow up)
+#
+# Step actions (all accept target: device|peer, when: <expr>, vars: {...}, description):
+#   netconf_config  {template, confirm_timeout?}   vendor template -> edit-config + commit confirmed
+#   netconf_rpc     {rpc}                          vendor RPC
+#   rest            {endpoint: device|<settings.endpoints name>, method, path, json, expect_status}
+#   verify          {probe, expect | max | min, timeout, interval}   polled until true or timeout
+#   wait            {seconds}
+# NETCONF changes are confirmed only after every step (including verifies) passed; on any
+# failure the engine issues cancel-commit and the devices revert to the pre-change config.
+
+playbooks:
+  - name: restore-admin-shutdown
+    description: Interface is shut down but intent says it should be up (config drift). Re-enable it.
+    match:
+      root_cause: INTERFACE_ADMIN_DOWN
+      when: "intent.enabled"
+    min_confidence: 0.8
+    steps:
+      - action: netconf_config
+        template: interface_enable
+      - action: verify
+        probe: interface_oper_status
+        expect: up
+        timeout: 30
+      - action: verify
+        description: verify BGP session over the restored link
+        when: "peer_ip"
+        probe: bgp_session_state
+        vars: {neighbor: "{{ peer_ip }}"}
+        expect: established
+        timeout: 30
+
+  - name: bounce-hung-link
+    description: Link down with both ends enabled. Bounce the interface to recover a hung transceiver/autoneg; escalate if the link stays down (physical fault).
+    match:
+      root_cause: LINK_DOWN
+    hold_down: 5
+    suppress_alarms: [INTERFACE_ADMIN_DOWN]
+    follow_up: "If the bounce did not restore {{ device }}:{{ interface }}, suspect a physical fault on the link to {{ peer_device }}:{{ peer_interface }}; OSPF has rerouted traffic around it."
+    steps:
+      - action: netconf_config
+        template: interface_disable
+        description: shut {{ interface }}
+      - action: wait
+        seconds: 2
+      - action: netconf_config
+        template: interface_enable
+        description: no-shut {{ interface }}
+      - action: verify
+        probe: interface_oper_status
+        expect: up
+        timeout: 15
+
+  - name: re-enable-bgp-neighbor
+    description: BGP neighbor disabled in configuration (drift). Re-enable it.
+    match:
+      root_cause: BGP_SESSION_DOWN
+      when: "attributes.reason == 'admin-shutdown'"
+    steps:
+      - action: netconf_config
+        template: bgp_neighbor_enable
+      - action: verify
+        probe: bgp_session_state
+        expect: established
+        timeout: 30
+
+  - name: clear-stuck-bgp-session
+    description: BGP session wedged with healthy transport (hold timer expired). Soft-reset the session.
+    match:
+      root_cause: BGP_SESSION_DOWN
+      when: "attributes.reason == 'hold-timer-expired'"
+    steps:
+      - action: netconf_rpc
+        rpc: clear_bgp_neighbor
+      - action: verify
+        probe: bgp_session_state
+        expect: established
+        timeout: 20
+
+  - name: restart-runaway-process
+    description: Control-plane CPU pinned by a non-critical process. Restart it over RESTCONF.
+    match:
+      root_cause: HIGH_CPU
+      when: "attributes.process in params.restartable"
+    params:
+      restartable: [telemetryd, snmpd, sshd]   # never auto-restart the routing daemon
+    steps:
+      - action: rest
+        endpoint: device
+        method: POST
+        path: /operations/autoheal-sim-ops:restart-process
+        json: {input: {name: "{{ attributes.process }}"}}
+        expect_status: [200, 204]
+      - action: verify
+        probe: cpu_utilization
+        max: 70
+        timeout: 20
+
+  - name: cost-out-degraded-link
+    description: Link taking CRC errors. Raise OSPF cost on both ends so traffic avoids it, then hand over for physical repair.
+    match:
+      root_cause: HIGH_ERROR_RATE
+      when: "peer_device"
+    outcome: mitigated
+    params:
+      cost_out: 65535
+    follow_up: "Inspect/replace the optic or patch on {{ device }}:{{ interface }} <-> {{ peer_device }}:{{ peer_interface }}, then restore OSPF cost {{ intent.ospf_cost }} on both ends."
+    steps:
+      - action: netconf_config
+        template: ospf_cost
+        vars: {cost: "{{ params.cost_out }}"}
+      - action: netconf_config
+        target: peer
+        template: ospf_cost
+        vars: {cost: "{{ params.cost_out }}"}
+      - action: verify
+        probe: ospf_interface_cost
+        expect: "{{ params.cost_out }}"
+        timeout: 15
+      - action: verify
+        target: peer
+        probe: ospf_interface_cost
+        expect: "{{ params.cost_out }}"
+        timeout: 15
+
+  - name: power-cycle-unresponsive-node
+    description: Device unreachable with neighbors confirming it is down. Power-cycle it via the out-of-band PDU REST API.
+    match:
+      root_cause: DEVICE_UNREACHABLE
+      when: "device_info.pdu_outlet"
+    min_confidence: 0.85
+    requires_approval: true      # large blast radius: a human confirms
+    follow_up: "Collect crash logs from {{ device }} and open a vendor case."
+    steps:
+      - action: rest
+        endpoint: pdu
+        method: POST
+        path: "/outlets/{{ device_info.pdu_outlet }}/cycle"
+        expect_status: [200, 202]
+      - action: verify
+        probe: device_reachable
+        expect: true
+        timeout: 90
+        interval: 3

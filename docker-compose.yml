@@ -1,0 +1,85 @@
+# Full stack on one Ubuntu host: Kafka (KRaft, no ZooKeeper) + the four platform
+# services as separate processes + the lab network simulator.
+#
+#   docker compose up -d --build
+#   open http://<host>:8080
+#
+# For production, drop the `simulator` service, point config/topology.yaml at real
+# devices, and set SIM_HOST/endpoints accordingly.
+
+# One image for every AutoHeal service. Only `simulator` builds it (several services
+# building the same tag in parallel collide); the others reuse it and never pull it.
+x-autoheal: &autoheal
+  image: autoheal:latest
+  pull_policy: never
+  restart: unless-stopped
+  environment:
+    KAFKA_BOOTSTRAP: kafka:9092
+    AUTOHEAL_BUS: kafka
+    SIM_HOST: simulator
+    AUTOHEAL_MODE: ${AUTOHEAL_MODE:-auto}
+    AUTOHEAL_WEBHOOK: ${AUTOHEAL_WEBHOOK:-}
+  depends_on:
+    kafka:
+      condition: service_healthy
+
+services:
+  kafka:
+    image: apache/kafka:3.8.1
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  simulator:
+    <<: *autoheal
+    build: .
+    pull_policy: build
+    command: ["sim", "--topology", "config/topology.yaml", "--host", "0.0.0.0"]
+    depends_on: []
+    ports:
+      - "8300:8300"
+
+  collector:
+    <<: *autoheal
+    command: ["run", "collector"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      simulator: {condition: service_started}
+
+  rca:
+    <<: *autoheal
+    command: ["run", "rca"]
+
+  remediator:
+    <<: *autoheal
+    command: ["run", "remediator"]
+
+  api:
+    <<: *autoheal
+    command: ["run", "api"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - api-data:/app/data
+
+volumes:
+  kafka-data:
+  api-data:

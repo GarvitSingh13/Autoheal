@@ -1,0 +1,104 @@
+# Network source of truth: devices, links, addressing and intent.
+# The simulator builds its lab network from this same file.
+#
+#            core1 ─────────── core2
+#             │   ╲           ╱   │
+#             │     ╲       ╱     │
+#             │       ╲   ╱       │
+#            agg1       ╳        agg2
+#             │                 │    ╲
+#             └──── edge1 ──────┘     edge2   (edge2 is single-homed)
+#
+# mgmt_root: where the NMS attaches; management is in-band from here, so a device whose
+# every path to core1 fails becomes unreachable (that is what "downstream" means in RCA).
+
+mgmt_root: core1
+
+devices:
+  core1:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8301
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/core1/restconf
+    vendor: sim
+    role: core
+    asn: 65001
+    pdu_outlet: 1
+    position: [300, 80]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.0.1/30, description: core2}
+      ge-0/0/1: {ip: 10.0.1.1/30, description: agg1}
+      ge-0/0/2: {ip: 10.0.2.1/30, description: agg2}
+      ge-0/0/9: {enabled: false, description: spare (intentionally shut)}
+  core2:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8302
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/core2/restconf
+    vendor: sim
+    role: core
+    asn: 65002
+    pdu_outlet: 2
+    position: [700, 80]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.0.2/30, description: core1}
+      ge-0/0/1: {ip: 10.0.3.1/30, description: agg1}
+      ge-0/0/2: {ip: 10.0.4.1/30, description: agg2}
+  agg1:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8303
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/agg1/restconf
+    vendor: sim
+    role: aggregation
+    asn: 65011
+    pdu_outlet: 3
+    position: [300, 290]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.1.2/30, description: core1}
+      ge-0/0/1: {ip: 10.0.3.2/30, description: core2}
+      ge-0/0/2: {ip: 10.0.5.1/30, description: edge1}
+  agg2:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8304
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/agg2/restconf
+    vendor: sim
+    role: aggregation
+    asn: 65012
+    pdu_outlet: 4
+    position: [700, 290]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.2.2/30, description: core1}
+      ge-0/0/1: {ip: 10.0.4.2/30, description: core2}
+      ge-0/0/2: {ip: 10.0.6.1/30, description: edge1}
+      ge-0/0/3: {ip: 10.0.7.1/30, description: edge2}
+  edge1:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8305
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/edge1/restconf
+    vendor: sim
+    role: edge
+    asn: 65021
+    pdu_outlet: 5
+    position: [500, 480]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.5.2/30, description: agg1}
+      ge-0/0/1: {ip: 10.0.6.2/30, description: agg2}
+  edge2:
+    host: ${SIM_HOST:-127.0.0.1}
+    netconf_port: 8306
+    restconf_url: http://${SIM_HOST:-127.0.0.1}:8300/devices/edge2/restconf
+    vendor: sim
+    role: edge
+    asn: 65022
+    pdu_outlet: 6
+    position: [880, 480]
+    interfaces:
+      ge-0/0/0: {ip: 10.0.7.2/30, description: agg2}
+
+links:
+  - [core1:ge-0/0/0, core2:ge-0/0/0]
+  - [core1:ge-0/0/1, agg1:ge-0/0/0]
+  - [core1:ge-0/0/2, agg2:ge-0/0/0]
+  - [core2:ge-0/0/1, agg1:ge-0/0/1]
+  - [core2:ge-0/0/2, agg2:ge-0/0/1]
+  - [agg1:ge-0/0/2, edge1:ge-0/0/0]
+  - [agg2:ge-0/0/2, edge1:ge-0/0/1]
+  - [agg2:ge-0/0/3, edge2:ge-0/0/0]

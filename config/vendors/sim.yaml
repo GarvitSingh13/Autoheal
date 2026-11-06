@@ -1,0 +1,57 @@
+# Vendor profile for the lab simulator (ietf-interfaces + autoheal-sim-* YANG modules).
+# Playbooks reference templates / rpcs / probes by name; this file supplies the payloads.
+
+name: sim
+
+namespaces:
+  if: urn:ietf:params:xml:ns:yang:ietf-interfaces
+  rt: urn:autoheal:sim:routing
+  sys: urn:autoheal:sim:system
+
+templates:   # inner <config> content for edit-config
+  interface_enable: |
+    <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+      <interface><name>{{ interface }}</name><enabled>true</enabled></interface>
+    </interfaces>
+  interface_disable: |
+    <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+      <interface><name>{{ interface }}</name><enabled>false</enabled></interface>
+    </interfaces>
+  ospf_cost: |
+    <routing xmlns="urn:autoheal:sim:routing">
+      <ospf><interface><name>{{ interface }}</name><cost>{{ cost }}</cost></interface></ospf>
+    </routing>
+  bgp_neighbor_enable: |
+    <routing xmlns="urn:autoheal:sim:routing">
+      <bgp><neighbor><address>{{ neighbor }}</address><enabled>true</enabled></neighbor></bgp>
+    </routing>
+
+rpcs:
+  clear_bgp_neighbor: |
+    <clear-bgp-neighbor xmlns="urn:autoheal:sim:ops"><address>{{ neighbor }}</address></clear-bgp-neighbor>
+
+probes:
+  interface_oper_status:
+    netconf_get:
+      filter: |
+        <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"><interface><name>{{ interface }}</name></interface></interfaces>
+      xpath: "string(//if:interface[if:name='{{ interface }}']/if:oper-status)"
+  bgp_session_state:
+    netconf_get:
+      filter: |
+        <routing xmlns="urn:autoheal:sim:routing"><bgp><neighbor><address>{{ neighbor }}</address></neighbor></bgp></routing>
+      xpath: "string(//rt:bgp/rt:neighbor[rt:address='{{ neighbor }}']/rt:session-state)"
+  ospf_adjacency_state:
+    netconf_get:
+      filter: |
+        <routing xmlns="urn:autoheal:sim:routing"><ospf><interface><name>{{ interface }}</name></interface></ospf></routing>
+      xpath: "string(//rt:ospf/rt:interface[rt:name='{{ interface }}']/rt:adjacency-state)"
+  ospf_interface_cost:
+    netconf_get_config:
+      filter: |
+        <routing xmlns="urn:autoheal:sim:routing"><ospf><interface><name>{{ interface }}</name></interface></ospf></routing>
+      xpath: "string(//rt:ospf/rt:interface[rt:name='{{ interface }}']/rt:cost)"
+  cpu_utilization:
+    restconf_get:
+      path: /data/autoheal-sim-system:system-state
+      json_path: autoheal-sim-system:system-state.cpu-utilization

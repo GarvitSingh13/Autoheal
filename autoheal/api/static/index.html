@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoHeal NOC</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --ink: #1c2330; --muted: #5d6878; --line: #e2e6ec;
+    --ok: #1f8a4c; --ok-bg: #e5f5ec; --warn: #b26b00; --warn-bg: #fdf1dc; --bad: #c62f2f; --bad-bg: #fbe7e7;
+    --info: #2463c7; --info-bg: #e6eefb; --idle: #8792a2; --accent: #2463c7;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151b; --panel: #1a2029; --ink: #e5e9ef; --muted: #98a3b3; --line: #2b3340;
+      --ok: #4cc27d; --ok-bg: #173325; --warn: #e9a23b; --warn-bg: #3a2c14; --bad: #f06a6a; --bad-bg: #3d1c1c;
+      --info: #6ea2f5; --info-bg: #1b2a44; --idle: #6b7586; --accent: #6ea2f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .dot.stale { background: var(--bad); }
+  main { padding: 16px 20px 40px; max-width: 1500px; margin: 0 auto; display: grid; gap: 16px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .kpi .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .kpi .l { color: var(--muted); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  svg text { fill: var(--ink); font-size: 13px; font-family: inherit; }
+  svg .lbl { fill: var(--muted); font-size: 11px; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 550; white-space: nowrap; }
+  .c-ok { color: var(--ok); background: var(--ok-bg); } .c-warn { color: var(--warn); background: var(--warn-bg); }
+  .c-bad { color: var(--bad); background: var(--bad-bg); } .c-info { color: var(--info); background: var(--info-bg); }
+  .c-idle { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+  .inc { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .inc summary { cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .inc summary::-webkit-details-marker { display: none; }
+  .inc .title { font-weight: 600; }
+  .inc .meta { color: var(--muted); font-size: 12px; }
+  .inc .body { margin-top: 10px; font-size: 13px; }
+  .explain { color: var(--muted); margin: 0 0 8px; }
+  .steps { list-style: none; padding: 0; margin: 8px 0 0; }
+  .steps li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 4px 0; border-top: 1px dashed var(--line); }
+  .steps .d { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .reason { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--bg); font-size: 13px; }
+  .conf { display: inline-block; width: 60px; height: 6px; background: var(--line); border-radius: 3px; vertical-align: middle; overflow: hidden; }
+  .conf > i { display: block; height: 100%; background: var(--accent); }
+  button { font: inherit; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 5px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  select, input { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); min-width: 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .feed { max-height: 360px; overflow: auto; font-size: 12.5px; }
+  .feed div { display: grid; grid-template-columns: 70px 64px 1fr; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .feed .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .feed .chip { align-self: start; justify-self: start; }
+  .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+  .attn { border-left: 3px solid var(--warn); padding: 8px 10px; background: var(--warn-bg); border-radius: 6px; margin-bottom: 8px; }
+  .attn.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button.on { border-color: var(--accent); color: var(--accent); }
+  #toast { position: fixed; bottom: 16px; right: 16px; background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 80vw; }
+  #toast.show { opacity: .95; }
+  @media (max-width: 600px) { main { padding: 12px 16px 32px; } header { padding: 12px 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AutoHeal NOC</h1>
+  <span class="sub">Autonomous Network Healing Platform</span>
+  <span class="spacer"></span>
+  <span id="mode" class="chip c-idle">mode: …</span>
+  <span class="live"><span id="dot" class="dot"></span><span id="updated">connecting…</span></span>
+</header>
+<main>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid2">
+    <section>
+      <h2>Topology</h2>
+      <svg id="topo" viewBox="0 0 1000 560" width="100%" style="max-height:520px" role="img" aria-label="Network topology with live status"></svg>
+      <div class="row hint">
+        <span class="chip c-ok">up</span><span class="chip c-warn">degraded</span><span class="chip c-bad">down / unreachable</span>
+      </div>
+    </section>
+    <section>
+      <h2>Needs attention</h2>
+      <div id="attention"></div>
+      <h2 style="margin-top:16px">Lab: inject a fault</h2>
+      <div id="lab"></div>
+    </section>
+  </div>
+  <div class="grid2">
+    <section>
+      <h2>Incidents</h2>
+      <div class="tabs" id="inc-tabs">
+        <button data-f="all" class="on">All</button><button data-f="open">Open</button><button data-f="closed">Closed</button>
+      </div>
+      <div id="incidents"></div>
+    </section>
+    <section>
+      <h2>Alarm stream</h2>
+      <div class="feed" id="feed"></div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtT = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString() : "";
+const ago = (ts) => { const s = Math.max(0, Date.now()/1000 - ts); return s < 60 ? `${s|0}s ago` : s < 3600 ? `${(s/60)|0}m ago` : `${(s/3600)|0}h ago`; };
+const REM_CLASS = { healed: "c-ok", mitigated: "c-ok", running: "c-info", scheduled: "c-info", pending_approval: "c-warn",
+  failed: "c-bad", escalated: "c-bad", no_playbook: "c-bad", expired: "c-warn", rejected: "c-idle", cancelled: "c-idle", dry_run: "c-idle" };
+const STEP_ICON = { ok: "✓", failed: "✗", running: "…", skipped: "–", rolled_back: "↺", pending: "·" };
+let incFilter = "all", openDetails = new Set(), labState = null;
+
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3500); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const body = r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(body?.detail || r.statusText);
+  return body;
+}
+
+function renderKpis(s) {
+  const k = [
+    ["Active alarms", s.alarms_active],
+    ["Open incidents", s.incidents_open],
+    ["Alarms → incidents", s.incidents_total ? `${s.alarms_total} → ${s.incidents_total}` : "–"],
+    ["Auto-healed", s.auto_healed],
+    ["Heal rate", s.auto_heal_rate ? Math.round(s.auto_heal_rate * 100) + "%" : "–"],
+    ["Mean time to heal", s.mean_time_to_heal_s != null ? s.mean_time_to_heal_s + "s" : "–"],
+  ];
+  $("#kpis").innerHTML = k.map(([l, v]) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${l}</div></div>`).join("");
+  const m = $("#mode"); m.textContent = "mode: " + s.mode;
+  m.className = "chip " + (s.mode === "auto" ? "c-ok" : s.mode === "approval" ? "c-warn" : "c-idle");
+}
+
+function renderTopo(t) {
+  const pos = {}; const n = t.devices.length;
+  t.devices.forEach((d, i) => pos[d.name] = d.position || [500 + 380 * Math.cos(2 * Math.PI * i / n), 280 + 230 * Math.sin(2 * Math.PI * i / n)]);
+  const col = { up: "var(--ok)", degraded: "var(--warn)", down: "var(--bad)", ok: "var(--ok)", unreachable: "var(--bad)" };
+  let out = "";
+  for (const l of t.links) {
+    const [a, ai] = l.a.split(":"), [b, bi] = l.b.split(":"); const [x1, y1] = pos[a], [x2, y2] = pos[b];
+    const dash = l.status === "down" ? 'stroke-dasharray="8 6"' : "";
+    out += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col[l.status]}" stroke-width="${l.status === "up" ? 3 : 4}" ${dash}><title>${esc(l.a)} ↔ ${esc(l.b)}: ${l.status}</title></line>`;
+    const f = 0.25;
+    out += `<text class="lbl" x="${x1 + (x2 - x1) * f}" y="${y1 + (y2 - y1) * f - 6}" text-anchor="middle">${esc(ai)}</text>`;
+    out += `<text class="lbl" x="${x2 + (x1 - x2) * f}" y="${y2 + (y1 - y2) * f - 6}" text-anchor="middle">${esc(bi)}</text>`;
+  }
+  for (const d of t.devices) {
+    const [x, y] = pos[d.name]; const c = col[d.status] || "var(--idle)";
+    out += `<g><title>${esc(d.name)} (${esc(d.role)}): ${d.status}, ${d.alarm_count} active alarm(s)</title>
+      <rect x="${x - 52}" y="${y - 22}" width="104" height="44" rx="9" fill="var(--panel)" stroke="${c}" stroke-width="2.5"/>
+      <circle cx="${x - 38}" cy="${y}" r="5" fill="${c}"/>
+      <text x="${x + 6}" y="${y - 2}" text-anchor="middle" font-weight="600">${esc(d.name)}</text>
+      <text class="lbl" x="${x + 6}" y="${y + 13}" text-anchor="middle">${esc(d.role)}${d.alarm_count ? " · " + d.alarm_count + "⚠" : ""}</text></g>`;
+  }
+  const xs = Object.values(pos).map(p => p[0]), ys = Object.values(pos).map(p => p[1]);
+  const x0 = Math.min(...xs) - 80, y0 = Math.min(...ys) - 50, w = Math.max(...xs) - x0 + 80, h = Math.max(...ys) - y0 + 50;
+  const svg = $("#topo"); svg.setAttribute("viewBox", `${x0} ${y0} ${w} ${h}`); svg.innerHTML = out;
+}
+
+function remChip(r) { return r ? `<span class="chip ${REM_CLASS[r.status] || "c-idle"}">${esc(r.status.replace("_", " "))}</span>` : `<span class="chip c-idle">analysing</span>`; }
+
+function renderAttention(incs) {
+  const items = incs.filter(i => i.remediation && ["pending_approval", "failed", "escalated", "no_playbook", "mitigated"].includes(i.remediation.status) && i.status !== "superseded")
+    .filter(i => i.remediation.status === "pending_approval" || i.status === "open");
+  if (!items.length) { $("#attention").innerHTML = `<div class="empty">Nothing needs an operator right now.</div>`; return; }
+  $("#attention").innerHTML = items.map(i => {
+    const r = i.remediation, pending = r.status === "pending_approval";
+    return `<div class="attn ${pending || r.status === "mitigated" ? "" : "bad"}">
+      <div class="row"><b>${esc(i.root_cause.type)}</b> on ${esc(i.root_cause.device)}${i.root_cause.resource ? ":" + esc(i.root_cause.resource) : ""} ${remChip(r)}</div>
+      <div class="hint">${esc(r.reason)}${r.follow_up ? "<br>Follow-up: " + esc(r.follow_up) : ""}</div>
+      ${pending ? `<div class="row" style="margin-top:8px"><span class="hint" style="margin:0">Playbook <b>${esc(r.playbook)}</b>: ${r.steps.map(s => esc(s.description)).join(" → ")}</span></div>
+      <div class="row" style="margin-top:8px"><button class="primary" data-act="approve" data-id="${r.id}">Approve</button><button class="danger" data-act="reject" data-id="${r.id}">Reject</button></div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderIncidents(incs) {
+  let list = incs;
+  if (incFilter === "open") list = incs.filter(i => i.status === "open");
+  if (incFilter === "closed") list = incs.filter(i => i.status !== "open");
+  if (!list.length) { $("#incidents").innerHTML = `<div class="empty">No incidents.</div>`; return; }
+  $("#incidents").innerHTML = list.slice(0, 60).map(i => {
+    const r = i.remediation, rc = i.root_cause;
+    const st = i.status === "open" ? "c-bad" : i.status === "cleared" ? "c-ok" : "c-idle";
+    const steps = r && r.steps.length ? `<ul class="steps">${r.steps.map(s =>
+      `<li><span title="${s.status}">${STEP_ICON[s.status] || "·"}</span><div>${esc(s.description)} <span class="meta">${esc(s.target)}</span>${s.detail ? `<div class="d">${esc(s.detail)}</div>` : ""}</div></li>`).join("")}</ul>` : "";
+    return `<details class="inc" data-id="${i.id}" ${openDetails.has(i.id) ? "open" : ""}>
+      <summary><span class="chip ${st}">${i.status}</span>
+        <span class="title">${esc(rc.type)} · ${esc(rc.device)}${rc.resource ? ":" + esc(rc.resource) : ""}</span>
+        ${remChip(r)}
+        <span class="meta">${i.symptoms.length} correlated · <span class="conf" title="confidence ${i.confidence}"><i style="width:${i.confidence * 100}%"></i></span> ${Math.round(i.confidence * 100)}% · ${ago(i.created_at)}</span>
+      </summary>
+      <div class="body">
+        <p class="explain">${esc(i.explanation)}</p>
+        ${i.superseded_by ? `<div class="meta">Superseded by ${esc(i.superseded_by)}</div>` : ""}
+        ${r ? `<div class="meta">Playbook: <b>${esc(r.playbook || "none")}</b>${r.approved_by ? " · approved by " + esc(r.approved_by) : ""}</div>${steps}
+        <div class="reason">${esc(r.reason)}${r.follow_up && ["mitigated", "failed"].includes(r.status) ? "<br><b>Follow-up:</b> " + esc(r.follow_up) : ""}</div>` : ""}
+      </div></details>`;
+  }).join("");
+}
+
+function renderFeed(log) {
+  if (!log.length) { $("#feed").innerHTML = `<div class="empty">No alarms yet.</div>`; return; }
+  $("#feed").innerHTML = log.map(a => {
+    const c = a.severity === "clear" ? "c-ok" : a.severity === "critical" ? "c-bad" : "c-warn";
+    return `<div><span class="t">${fmtT(a.timestamp)}</span><span class="chip ${c}">${esc(a.severity)}</span>
+      <span>${esc(a.type)} <b>${esc(a.device)}</b>${a.resource ? ":" + esc(a.resource) : ""} <span class="meta">${esc(a.message)}</span></span></div>`;
+  }).join("");
+}
+
+async function renderLab() {
+  try { labState = await api("/api/lab/faults"); } catch (e) { $("#lab").innerHTML = `<div class="empty">Simulator not configured or unreachable.</div>`; return; }
+  const box = $("#lab");
+  if (!box.dataset.built) {
+    box.dataset.built = "1";
+    const types = Object.entries(labState.catalog);
+    box.innerHTML = `<div class="row">
+        <select id="f-type">${types.map(([k]) => `<option value="${k}">${k.replace(/_/g, " ")}</option>`).join("")}</select>
+        <select id="f-dev">${Object.keys(labState.devices).map(d => `<option>${d}</option>`).join("")}</select>
+        <select id="f-arg"></select>
+        <button class="primary" id="f-go">Inject</button></div>
+      <div class="hint" id="f-help"></div><div id="f-active" style="margin-top:10px"></div>`;
+    const sync = () => {
+      const t = $("#f-type").value, d = labState.devices[$("#f-dev").value];
+      $("#f-help").textContent = labState.catalog[t];
+      let opts = [];
+      if (["admin_shutdown", "link_hang", "fiber_cut", "crc_errors"].includes(t)) opts = d.interfaces;
+      else if (["bgp_stuck", "bgp_neighbor_shutdown"].includes(t)) opts = d.neighbors;
+      else if (t === "cpu_runaway") opts = ["telemetryd", "snmpd", "rpd"];
+      const sel = $("#f-arg"); sel.innerHTML = opts.map(o => `<option>${o}</option>`).join(""); sel.style.display = opts.length ? "" : "none";
+    };
+    $("#f-type").onchange = sync; $("#f-dev").onchange = sync; sync();
+    $("#f-go").onclick = async () => {
+      const t = $("#f-type").value, body = { type: t, device: $("#f-dev").value }, arg = $("#f-arg").value;
+      if (["admin_shutdown", "link_hang", "fiber_cut", "crc_errors"].includes(t)) body.interface = arg;
+      if (["bgp_stuck", "bgp_neighbor_shutdown"].includes(t)) body.neighbor = arg;
+      if (t === "cpu_runaway") body.process = arg;
+      try { await api("/api/lab/faults", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); toast(`Injected ${t} on ${body.device}`); refresh(); }
+      catch (e) { toast("Inject failed: " + e.message); }
+    };
+  }
+  const act = labState.active;
+  $("#f-active").innerHTML = act.length ? act.map(f => `<div class="row" style="margin-bottom:4px"><span class="chip c-warn">${esc(f.type)}</span>
+      <span>${esc(f.device)}${f.interface ? ":" + esc(f.interface) : ""}${f.neighbor ? " → " + esc(f.neighbor) : ""}${f.process ? " (" + esc(f.process) + ")" : ""}</span>
+      <button data-repair="${f.id}">Repair</button></div>`).join("") : `<div class="empty">No physical faults active.</div>`;
+}
+
+async function refresh() {
+  try {
+    const [summary, topo, incs, log] = await Promise.all([api("/api/summary"), api("/api/topology"), api("/api/incidents?limit=100"), api("/api/alarms/log?limit=150")]);
+    renderKpis(summary); renderTopo(topo); renderAttention(incs); renderIncidents(incs); renderFeed(log);
+    $("#dot").classList.remove("stale"); $("#updated").textContent = "live · " + new Date().toLocaleTimeString();
+  } catch (e) { $("#dot").classList.add("stale"); $("#updated").textContent = "API unreachable"; }
+  renderLab();
+}
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button"); if (!b) return;
+  if (b.dataset.act) {
+    b.disabled = true;
+    try { await api(`/api/remediations/${b.dataset.id}/${b.dataset.act}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: "dashboard" }) }); toast(`${b.dataset.act} sent`); }
+    catch (e) { toast(e.message); b.disabled = false; }
+    setTimeout(refresh, 400);
+  } else if (b.dataset.repair) {
+    try { await api(`/api/lab/faults/${b.dataset.repair}`, { method: "DELETE" }); toast("Fault repaired"); refresh(); } catch (e) { toast(e.message); }
+  } else if (b.dataset.f) {
+    incFilter = b.dataset.f; document.querySelectorAll("#inc-tabs button").forEach(x => x.classList.toggle("on", x === b)); refresh();
+  }
+});
+document.addEventListener("toggle", (ev) => { const d = ev.target; if (d.matches?.("details.inc")) d.open ? openDetails.add(d.dataset.id) : openDetails.delete(d.dataset.id); }, true);
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

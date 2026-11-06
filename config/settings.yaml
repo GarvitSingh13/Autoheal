@@ -1,0 +1,61 @@
+# Autonomous Network Healing Platform - settings
+# Any key can be overridden by env: AUTOHEAL__<SECTION>__<KEY>=value (e.g. AUTOHEAL__REMEDIATION__MODE=approval)
+# ${VAR:-default} references are expanded from the environment.
+
+log_level: ${AUTOHEAL_LOG_LEVEL:-INFO}
+
+bus:
+  backend: ${AUTOHEAL_BUS:-kafka}            # kafka | memory (single-process demo)
+  bootstrap_servers: ${KAFKA_BOOTSTRAP:-localhost:9092}
+  topic_prefix: autoheal                     # topics: autoheal.alarms / .incidents / .remediations / .commands
+  group_id: autoheal
+  partitions: 3
+  replication_factor: 1
+
+api:
+  host: 0.0.0.0
+  port: ${AUTOHEAL_API_PORT:-8080}
+  db_path: data/autoheal.db                  # read model, rebuilt from Kafka if deleted
+
+collector:
+  reconnect_interval: 3                      # seconds between reconnect attempts
+  unreachable_after_failures: 2              # failed (re)connects before DEVICE_UNREACHABLE
+  resync_interval: 60                        # periodic full-state resync (seconds)
+  connect_timeout: 5
+
+rca:
+  correlation_window: 5                      # seconds to gather related alarms before deciding
+  standalone_confidence: 0.6                 # confidence for alarms no rule can correlate
+  residual_grace: 30                         # let protocols reconverge before re-analysing leftover symptoms
+
+remediation:
+  mode: ${AUTOHEAL_MODE:-auto}               # auto | approval (every action needs an operator) | dry_run
+  min_confidence: 0.7                        # never act automatically on a weaker diagnosis
+  max_concurrent: 4
+  max_actions_per_device_per_hour: 6
+  flap_limit: {count: 3, window: 3600}       # same fault fixed 3x in an hour -> stop, escalate
+  circuit_breaker: {max_actions: 20, window: 600}
+  confirm_timeout: 120                       # NETCONF confirmed-commit auto-rollback timer
+  approval_timeout: 1800
+  excluded_devices: []                       # or tag a device "no-auto-heal" in topology.yaml
+  notify_webhook: ${AUTOHEAL_WEBHOOK:-}      # Slack/Teams-compatible incoming webhook (optional)
+
+credentials:
+  netconf: {username: ${NETCONF_USER:-admin}, password: ${NETCONF_PASSWORD:-admin}}
+  restconf: {username: ${RESTCONF_USER:-admin}, password: ${RESTCONF_PASSWORD:-admin}}
+
+# External REST systems playbooks can call (rest step with endpoint: <name>)
+endpoints:
+  pdu:
+    base_url: http://${SIM_HOST:-127.0.0.1}:8300/pdu
+    username: ${PDU_USER:-admin}
+    password: ${PDU_PASSWORD:-admin}
+
+paths:
+  topology: config/topology.yaml
+  rules: config/rca_rules.yaml
+  playbooks: config/playbooks.yaml
+  vendors_dir: config/vendors
+
+lab:
+  simulator_url: http://${SIM_HOST:-127.0.0.1}:8300   # enables fault injection from the dashboard

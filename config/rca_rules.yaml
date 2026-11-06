@@ -1,0 +1,87 @@
+# Root cause correlation rules.
+#
+# A rule says: an alarm of type `root` explains alarms of the listed types when the topology
+# `relation` holds. Relations:
+#   same_resource    same device and resource
+#   same_device      same device
+#   same_link        both alarms sit on the same physical link (either end, or a routing
+#                    session riding on that link)
+#   facing_device    symptom is on a neighbor, on the interface/session facing the root device
+#   downstream       symptom device loses management reachability if the root device fails
+#   isolated_by_link symptom device loses management reachability if the root's link fails
+#
+# Selection: highest priority first, then most alarms explained, then earliest.
+# `when` (optional) filters on the root alarm; per-explains `when` sees `root` and `symptom`.
+# Confidence drops to 60% of the rule's value when fewer than `min_symptoms` corroborate it.
+
+rules:
+  - name: interface-admin-down
+    description: An interface was administratively shut down; the far end and every routing session over that link fail as a consequence.
+    root: INTERFACE_ADMIN_DOWN
+    priority: 110            # an explicit config state is the most definitive cause there is
+    confidence: 0.95
+    explains:
+      - {type: LINK_DOWN, relation: same_link}
+      - {type: OSPF_NEIGHBOR_DOWN, relation: same_link}
+      - {type: BGP_SESSION_DOWN, relation: same_link}
+      - {type: DEVICE_UNREACHABLE, relation: isolated_by_link}
+
+  - name: node-failure
+    description: The device stopped responding; neighbors lose the links and sessions facing it, and devices behind it become unreachable.
+    root: DEVICE_UNREACHABLE
+    priority: 100
+    confidence: 0.9
+    min_symptoms: 1          # with no neighbor corroboration it may just be a management-path problem
+    explains:
+      - {type: LINK_DOWN, relation: facing_device}
+      - {type: OSPF_NEIGHBOR_DOWN, relation: facing_device}
+      - {type: BGP_SESSION_DOWN, relation: facing_device}
+      - {type: DEVICE_UNREACHABLE, relation: downstream}
+      - {type: "*", relation: same_device}
+
+  - name: bgp-neighbor-admin-down
+    description: A BGP neighbor was disabled in configuration; the remote side sees the session closed.
+    root: BGP_SESSION_DOWN
+    when: "root.attributes.reason == 'admin-shutdown'"
+    priority: 85
+    confidence: 0.9
+    explains:
+      - {type: BGP_SESSION_DOWN, relation: same_link}
+
+  - name: physical-link-failure
+    description: A link is down at layer 1/2 with both ends enabled; routing adjacencies over it fail with it.
+    root: LINK_DOWN
+    priority: 70
+    confidence: 0.85
+    explains:
+      - {type: LINK_DOWN, relation: same_link}
+      - {type: OSPF_NEIGHBOR_DOWN, relation: same_link}
+      - {type: BGP_SESSION_DOWN, relation: same_link}
+      - {type: DEVICE_UNREACHABLE, relation: isolated_by_link}
+
+  - name: degraded-link
+    description: A link is taking input errors (optic, patch or cable degradation).
+    root: HIGH_ERROR_RATE
+    priority: 50
+    confidence: 0.85
+    explains:
+      - {type: HIGH_ERROR_RATE, relation: same_link}
+      - {type: OSPF_NEIGHBOR_DOWN, relation: same_link}
+      - {type: BGP_SESSION_DOWN, relation: same_link}
+
+  - name: control-plane-overload
+    description: Control-plane CPU exhaustion; keepalives are missed and sessions time out.
+    root: HIGH_CPU
+    priority: 40
+    confidence: 0.8
+    explains:
+      - {type: BGP_SESSION_DOWN, relation: same_device, when: "symptom.attributes.reason == 'hold-timer-expired'"}
+      - {type: BGP_SESSION_DOWN, relation: facing_device, when: "symptom.attributes.reason == 'hold-timer-expired'"}
+
+  - name: bgp-session-failure
+    description: A BGP session failed while its transport is healthy (protocol/state problem); the peer reports the same session.
+    root: BGP_SESSION_DOWN
+    priority: 30
+    confidence: 0.8
+    explains:
+      - {type: BGP_SESSION_DOWN, relation: same_link}
